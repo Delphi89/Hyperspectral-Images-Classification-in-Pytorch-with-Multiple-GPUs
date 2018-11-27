@@ -7,18 +7,18 @@ import matplotlib.pyplot as plt
 import torch.cuda.nccl as nccl
 import numpy
 import scipy.io as sio
-from torchvision.transforms import ToTensor
 
 # torch.manual_seed(1)    # reproducible
 
 # Hyper Parameters
-EPOCH = 2            
-BATCH_SIZE = 64
+EPOCH = 50         
+BATCH_SIZE = 8
 BATCH_SIZE2 = 256
-LR = 3e-3              # learning rate
+LR = 1e-4              # learning rate
 TRAIN_SIZE = 1800        # 3437
 TEST_SIZE = 40976
 MM = 0             # momentum
+DROPOUT_INITIAL = 0
 DROPOUT = 0           # dropout
 TRAIN_VECTOR_SIZE = 200
 
@@ -28,25 +28,20 @@ test_data = test['test_data']
 test_data = numpy.array(test_data, dtype=numpy.float32)
 test_data = torch.from_numpy(numpy.array(test_data))
 test_data = test_data.permute(0,3,1,2)
-print(test_data.shape)
 
 test_target = test['test_target']
 test_target = numpy.array(test_target, dtype=numpy.float32)
 test_target = torch.from_numpy(numpy.array(test_target))
-print(test_target.shape)
 
 train_data = test['train_data']
 train_data = numpy.array(train_data, dtype=numpy.float32)
 train_data = torch.from_numpy(numpy.array(train_data))
 train_data.requires_grad = True
 train_data = train_data.permute(0,3,1,2)
-print(train_data.shape)
 
 train_target = test['train_target']
 train_target = numpy.array(train_target, dtype=numpy.float32)
 train_target = torch.from_numpy(numpy.array(train_target))
-print(train_target.shape)
-
 
 
 # Data Loader for easy mini-batch return in training
@@ -56,33 +51,51 @@ test_loader  = Data.DataLoader(dataset =  test_data, batch_size = BATCH_SIZE2, s
 class CNN(nn.Module):
     def __init__(self):
         super(CNN, self).__init__()
-        self.conv1 = nn.Sequential(         # input shape (1, 28, 28)
-            nn.Dropout(p = DROPOUT),
+        self.conv1 = nn.Sequential(         
+            nn.Dropout(p = DROPOUT_INITIAL),
             nn.Conv2d(103, 103, 5, 1, 3),
             nn.BatchNorm2d(103),
             nn.Dropout(p = DROPOUT),
-            nn.ReLU(),                      # activation
-            nn.MaxPool2d(kernel_size=2),    # choose max value in 2x2 area, output shape (16, 14, 14)
+            nn.ReLU(True),                      # activation
+            nn.MaxPool2d(2),    
         )
         self.conv2 = nn.Sequential(         # 
-            nn.Conv2d(103, 64, 5, 1, 3),    # 
-            nn.BatchNorm2d(64),
+            nn.Conv2d(103, 103, 5, 1, 3),    # 
+            nn.BatchNorm2d(103),
             nn.Dropout(p = DROPOUT),             
-            nn.ReLU(),                      # activation
+            nn.ReLU(True),                      # activation
             nn.MaxPool2d(2),                # 
         )
-        self.out = nn.Linear(256, 10)   # fully connected layer, output 9 classes
+        self.conv3 = nn.Sequential(         # 
+            nn.Conv2d(103, 103, 5, 1, 3),    # 
+            nn.BatchNorm2d(103),
+            nn.Dropout(p = DROPOUT),             
+            nn.ReLU(True),                      # activation
+            nn.MaxPool2d(2),                # 
+        )
+        
+        self.classifier = nn.Sequential(
+            nn.Dropout(DROPOUT),
+            nn.Linear(412,243),
+            nn.ReLU(True),
+            nn.Dropout(DROPOUT),
+            nn.Linear(243, 81),
+            nn.ReLU(True),
+            nn.Linear(81, 10),
+        )
+        #self.out = nn.Linear(412, 10)   # fully connected layer, output 9 classes
 
     def forward(self, x):
         x = self.conv1(x)
         x = self.conv2(x)
+        x = self.conv3(x)
         x = x.view(x.size(0), -1) 
-        output = self.out(x)
-        return output, x    # return x for visualization
+        output = self.classifier(x)
+        return output, x  
 
 
 cnn = CNN()
-print(cnn)  # net architecture
+# print(cnn)  # net architecture
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -99,8 +112,8 @@ cnn.to(device)
 import torch.optim as optim
 
 loss_func = nn.CrossEntropyLoss()                       
-optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
-#optimizer = optim.SGD(cnn.parameters(), lr=LR, momentum=MM)
+#optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
+optimizer = optim.SGD(cnn.parameters(), lr=LR, momentum=MM)
 
 train_target = torch.t(train_target).type(torch.LongTensor).cuda()
 test_target = torch.t(test_target).type(torch.LongTensor).cuda()
@@ -145,7 +158,7 @@ for j in range (40976):
         label2[0,predicted[j]-1] += 1                 
                 
                                
-print('Correct classification in each class: ',label2)
+#print('Correct classification in each class: ',label2)
 percent = (torch.sum(c).item()/TEST_SIZE)
 print('Correct Classification (Percent): %.2f' % percent)
 print('Results by classes: ',label2/label1)
