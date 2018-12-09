@@ -1,6 +1,6 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch
 import torch.utils.data as Data
 import torchvision
 import matplotlib.pyplot as plt
@@ -8,19 +8,33 @@ import torch.cuda.nccl as nccl
 import numpy
 import scipy.io as sio
 
-# torch.manual_seed(1)    # reproducible
+torch.manual_seed(1)   # reproducible
 
 # Hyper Parameters
-EPOCH = 50         
-BATCH_SIZE = 8
-BATCH_SIZE2 = 256
-LR = 1e-4              # learning rate
+EPOCH = 10              # number of epochs
+BATCH_SIZE = 4         # used for training 
+BATCH_SIZE2 = 256      # used for test
+LR = 1e-5              # learning rate
+MM = 0                 # momentum - used only with SGD optimizer
+
+# use 3 dropout values: one for the input image, one for convolution layers, one for final (linear) layers
+DROPOUT_INITIAL = 0
+DROPOUT_MIDDLE = 0         
+DROPOUT_CLASSIFIER = 0.9
+
+RELU = True
+
+L_FIRST = 103
+L_SECOND = 128
+L_THIRD = 192
+L_FOURTH = 368
+L_FIFTH = 192
+L_SIXTH = 96
+L_SEVENTH = 32
+
+TRAIN_VECTOR_SIZE = 200
 TRAIN_SIZE = 1800        # 3437
 TEST_SIZE = 40976
-MM = 0             # momentum
-DROPOUT_INITIAL = 0
-DROPOUT = 0           # dropout
-TRAIN_VECTOR_SIZE = 200
 
 test = sio.loadmat('database200.mat')
 
@@ -51,52 +65,76 @@ test_loader  = Data.DataLoader(dataset =  test_data, batch_size = BATCH_SIZE2, s
 class CNN(nn.Module):
     def __init__(self):
         super(CNN, self).__init__()
-        self.conv1 = nn.Sequential(         
+        self.conv = nn.Sequential(         
             nn.Dropout(p = DROPOUT_INITIAL),
-            nn.Conv2d(103, 103, 5, 1, 3),
-            nn.BatchNorm2d(103),
-            nn.Dropout(p = DROPOUT),
-            nn.ReLU(True),                      # activation
+            
+            nn.Conv2d(L_FIRST, L_SECOND, 5, 1, 3),
+            nn.Dropout(p = DROPOUT_MIDDLE),
+            nn.ReLU(RELU),                      
             nn.MaxPool2d(2),    
-        )
-        self.conv2 = nn.Sequential(         # 
-            nn.Conv2d(103, 103, 5, 1, 3),    # 
-            nn.BatchNorm2d(103),
-            nn.Dropout(p = DROPOUT),             
-            nn.ReLU(True),                      # activation
-            nn.MaxPool2d(2),                # 
-        )
-        self.conv3 = nn.Sequential(         # 
-            nn.Conv2d(103, 103, 5, 1, 3),    # 
-            nn.BatchNorm2d(103),
-            nn.Dropout(p = DROPOUT),             
-            nn.ReLU(True),                      # activation
-            nn.MaxPool2d(2),                # 
+            nn.BatchNorm2d(L_SECOND),
+
+            nn.Conv2d(L_SECOND, L_THIRD, 5, 1, 3),     
+            nn.Dropout(p = DROPOUT_MIDDLE),             
+            nn.ReLU(RELU),                      
+            nn.MaxPool2d(2),                
+            nn.BatchNorm2d(L_THIRD),
+
+#            nn.Conv2d(L_THIRD, L_FOURTH, 5, 1, 3),     
+#            nn.Dropout(p = DROPOUT_MIDDLE),             
+#            nn.ReLU(RELU),                      
+#            nn.MaxPool2d(2),                 
+#            nn.BatchNorm2d(L_FOURTH),
+
+#            nn.Conv2d(L_FOURTH, L_FIFTH, 5, 1, 3),     
+#            nn.Dropout(p = DROPOUT_MIDDLE),             
+#            nn.ReLU(RELU),                      
+#            nn.MaxPool2d(2),                 
+#            nn.BatchNorm2d(L_FIFTH),
         )
         
+        self.conv2 = nn.Sequential(         
+            nn.Dropout(p = DROPOUT_INITIAL),
+            
+            nn.Conv2d(L_FIRST, L_SECOND, 5, 1, 3),
+            nn.Dropout(p = DROPOUT_MIDDLE),
+            nn.ReLU(RELU),                      
+            nn.MaxPool2d(2),    
+            nn.BatchNorm2d(L_SECOND),
+
+            nn.Conv2d(L_SECOND, L_THIRD, 5, 1, 3),     
+            nn.Dropout(p = DROPOUT_MIDDLE),             
+            nn.ReLU(RELU),                      
+            nn.MaxPool2d(2),                
+            nn.BatchNorm2d(L_THIRD),
+        )       
+        
+        
         self.classifier = nn.Sequential(
-            nn.Dropout(DROPOUT),
-            nn.Linear(412,243),
-            nn.ReLU(True),
-            nn.Dropout(DROPOUT),
-            nn.Linear(243, 81),
-            nn.ReLU(True),
-            nn.Linear(81, 10),
+            nn.Dropout(DROPOUT_CLASSIFIER),
+            nn.Linear(L_FIFTH*4,L_SIXTH),
+            nn.ReLU(RELU),
+            
+            nn.Dropout(DROPOUT_CLASSIFIER),
+            nn.Linear(L_SIXTH, L_SEVENTH),
+            nn.ReLU(RELU),
+            
+            nn.Linear(L_SEVENTH, 10),
         )
-        #self.out = nn.Linear(412, 10)   # fully connected layer, output 9 classes
 
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
+        x1 = self.conv(x)          
+        x2 = self.conv2(x)  
+        x = x1 + x2
         x = x.view(x.size(0), -1) 
-        output = self.classifier(x)
-        return output, x  
-
+        output1 = self.classifier(x)
+        return output1, x 
+    
 
 cnn = CNN()
-# print(cnn)  # net architecture
+print(cnn)  # net architecture
 
+#torch.cuda.synchronize()
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(device)
@@ -111,9 +149,20 @@ cnn.to(device)
 
 import torch.optim as optim
 
-loss_func = nn.CrossEntropyLoss()                       
-#optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
-optimizer = optim.SGD(cnn.parameters(), lr=LR, momentum=MM)
+# it seems these loss functions have a different form of return 
+#loss_func = nn.L1Loss()
+#loss_func = nn.MSELoss()
+#loss_func = nn.SoftMarginLoss()
+#loss_func = nn.MultiLabelSoftMarginLoss()
+#loss_func = nn.PoissonNLLLoss()
+
+
+loss_func = nn.CrossEntropyLoss()
+#loss_func = nn.NLLLoss()
+
+
+optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
+#optimizer = optim.SGD(cnn.parameters(), lr=LR, momentum=MM)
 
 train_target = torch.t(train_target).type(torch.LongTensor).cuda()
 test_target = torch.t(test_target).type(torch.LongTensor).cuda()
@@ -135,9 +184,7 @@ for epoch in range(EPOCH):
             test_output, last_layer = cnn(train_data)
             pred_y = torch.max(test_output, 1)[1]
             accuracy = torch.sum(pred_y == train_target[0]).type(torch.FloatTensor) / float(train_target.size(1))
-            print('Epoch: ', epoch, '| train loss: ' % loss.data.cpu().numpy(), '| training accuracy: %.3f' % accuracy)
-                             
-
+            print('Epoch: ', epoch, '| train loss: ' % loss.data.cpu().numpy(), '| training accuracy: %.3f' % accuracy)     
 #label1 = torch.zeros(1,9)
 # pixels in each class in the test vector
 label1 = torch.tensor([6431, 18449, 1899, 2864, 1145, 4829, 1130, 3482, 747]).type(torch.FloatTensor)
