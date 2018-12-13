@@ -1,4 +1,4 @@
-# Hyperspectral-Images-Classification-in-Pytorch
+# Hyperspectral Images Classification in Pytorch with Multiple GPUs
 Hyperspectral Images Classification in Pytorch - Pavia University
 
 Objective: classification of the hyperspectral images (pavia university map, 103 bands, ~42k pixels)
